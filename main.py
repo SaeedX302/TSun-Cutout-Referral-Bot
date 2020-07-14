@@ -11,7 +11,6 @@ import sys
 # --- CONFIGURATION ---
 REFERRAL_CODE = "cutout_share-2091786"  # Your referral code
 DOMAIN = "dayrep.com"
-# Try using both https and http if one fails, or ensure the URL is exactly correct
 SOCKET_URL = "https://ws.fakemailgenerator.com" 
 BASE_URL = "https://www.fakemailgenerator.com"
 REG_API_TEMPLATE = "https://restapi.cutout.pro/user/registerByEmail2?email={prefix}%40{domain}&password={prefix}%40{domain}&vsource={vsource}"
@@ -60,7 +59,6 @@ class CutoutAutomator:
     def __init__(self, prefix):
         self.prefix = prefix
         self.email = f"{prefix}@{DOMAIN}"
-        # logger=True, engineio_logger=True can help debug but produce a lot of output
         self.sio = socketio.Client(reconnection=True, reconnection_attempts=5, reconnection_delay=2)
         self.found_link = False
 
@@ -73,7 +71,6 @@ class CutoutAutomator:
     def on_connect(self):
         log(f"[*] Connected to WebSocket. Watching: {self.email}", Colors.CYAN)
         self.sio.emit('watch_address', self.email.lower())
-        # Small delay to ensure the server registered our watch request
         time.sleep(1)
         self.trigger_registration()
 
@@ -84,15 +81,12 @@ class CutoutAutomator:
         reg_url = REG_API_TEMPLATE.format(prefix=self.prefix, domain=DOMAIN, vsource=REFERRAL_CODE)
         log(f"[*] Sending Registration Request (api_1)...", Colors.BLUE)
         try:
-            # Use a session for better connection handling
             with requests.Session() as session:
                 res = session.get(reg_url, timeout=15)
                 log(f"[*] api_1 Response: {res.text}", Colors.BLUE)
                 log("[*] Waiting for activation email...", Colors.WARNING)
         except Exception as e:
             log(f"[!] api_1 Failed: {e}", Colors.FAIL)
-            # Don't disconnect yet, maybe the request actually went through
-            # but we just didn't get the response
 
     def on_email(self, data):
         try:
@@ -104,7 +98,6 @@ class CutoutAutomator:
                 log("\n" + "!"*20 + " EMAIL DETECTED " + "!"*20, Colors.GREEN)
                 log(f"From: {sender}", Colors.BOLD)
                 
-                # Wait for the server to populate the email body
                 time.sleep(3)
                 link = extract_activation_link(email.get('emailid'), DOMAIN, self.prefix)
                 
@@ -136,9 +129,7 @@ class CutoutAutomator:
     def start(self):
         log(f"[*] Connecting to {SOCKET_URL}...", Colors.CYAN)
         try:
-            # Try connecting with both websocket and polling as fallback
             self.sio.connect(SOCKET_URL, transports=['websocket', 'polling'], socketio_path='socket.io')
-            # Wait until link is found or timeout (e.g., 5 minutes)
             start_time = time.time()
             while not self.found_link and (time.time() - start_time < 300):
                 time.sleep(1)
@@ -148,7 +139,6 @@ class CutoutAutomator:
                 
         except socketio.exceptions.ConnectionError as e:
             log(f"[!] Could not connect to the server: {e}", Colors.FAIL)
-            log("[*] Tip: Check your internet connection or if the website is down.", Colors.WARNING)
         except Exception as e:
             log(f"[!] An unexpected error occurred: {e}", Colors.FAIL)
         finally:
@@ -156,15 +146,25 @@ class CutoutAutomator:
                 self.sio.disconnect()
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        target_prefix = sys.argv[1]
-    else:
-        target_prefix = generate_prefix()
+    try:
+        if len(sys.argv) > 1:
+            target_prefix = sys.argv[1]
+        else:
+            target_prefix = generate_prefix()
 
-    log(f"\n{Colors.HEADER}=== CUTOUT.PRO AUTO-REGISTRATION TOOL (FIXED) ==={Colors.ENDC}")
-    log(f"Target Prefix: {Colors.BOLD}{target_prefix}{Colors.ENDC}")
-    log(f"Referral:      {REFERRAL_CODE}")
-    log("-" * 50)
+        log(f"\n{Colors.HEADER}=== CUTOUT.PRO AUTO-REGISTRATION TOOL ==={Colors.ENDC}")
+        log(f"Target Prefix: {Colors.BOLD}{target_prefix}{Colors.ENDC}")
+        log(f"Referral:      {REFERRAL_CODE}")
+        log("-" * 50)
 
-    automator = CutoutAutomator(target_prefix)
-    automator.start()
+        automator = CutoutAutomator(target_prefix)
+        automator.start()
+        
+    except KeyboardInterrupt:
+        log("\n[!] Interrupted by user.", Colors.FAIL)
+    except Exception as e:
+        log(f"\n[!] Fatal Error: {e}", Colors.FAIL)
+    finally:
+        # Keep the terminal open
+        print("\n" + "-" * 50)
+        input(f"{Colors.BOLD}Press ENTER to close the terminal...{Colors.ENDC}")

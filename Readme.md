@@ -33,3 +33,5 @@ You need the You'll need python-socketio, requests, and beautifulsoup4 library
 **Beautiful Logs:** It uses colors to distinguish between connection status, registration responses, and the final link.
 
 ***Referral Integration:*** Your referral code cutout_share-2091786 is already hardcoded into the script.
+
+***Waiting For Confirmation:*** Keep Terminal Open Untill user click any key or menully close it.
