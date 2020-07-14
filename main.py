@@ -7,6 +7,7 @@ import random
 import string
 import re
 import sys
+import os
 
 # --- CONFIGURATION ---
 REFERRAL_CODE = "cutout_share-2091786"  # Your referral code
@@ -14,6 +15,7 @@ DOMAIN = "dayrep.com"
 SOCKET_URL = "https://ws.fakemailgenerator.com" 
 BASE_URL = "https://www.fakemailgenerator.com"
 REG_API_TEMPLATE = "https://restapi.cutout.pro/user/registerByEmail2?email={prefix}%40{domain}&password={prefix}%40{domain}&vsource={vsource}"
+ACCOUNTS_FILE = "accounts.json"
 
 # Colors for pretty logging
 class Colors:
@@ -35,6 +37,34 @@ def generate_prefix(length=8):
     """Generates a random alphanumeric prefix."""
     chars = string.ascii_lowercase + string.digits
     return ''.join(random.choice(chars) for _ in range(length))
+
+def save_account_to_json(email, password, activation_link):
+    """Saves the account details to a JSON file."""
+    account_data = {
+        "email": email,
+        "password": password,
+        "activation_link": activation_link,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+    }
+    
+    data = []
+    if os.path.exists(ACCOUNTS_FILE):
+        try:
+            with open(ACCOUNTS_FILE, "r") as f:
+                data = json.load(f)
+                if not isinstance(data, list):
+                    data = []
+        except (json.JSONDecodeError, IOError):
+            data = []
+            
+    data.append(account_data)
+    
+    try:
+        with open(ACCOUNTS_FILE, "w") as f:
+            json.dump(data, f, indent=4)
+        log(f"[*] Account saved to {ACCOUNTS_FILE}", Colors.GREEN)
+    except Exception as e:
+        log(f"[!] Error saving account to JSON: {e}", Colors.FAIL)
 
 def extract_activation_link(email_id, domain, recipient):
     """Fetches the email content and extracts the cutout.pro activation link."""
@@ -59,6 +89,7 @@ class CutoutAutomator:
     def __init__(self, prefix):
         self.prefix = prefix
         self.email = f"{prefix}@{DOMAIN}"
+        self.password = f"{prefix}@{DOMAIN}"
         self.sio = socketio.Client(reconnection=True, reconnection_attempts=5, reconnection_delay=2)
         self.found_link = False
 
@@ -105,6 +136,7 @@ class CutoutAutomator:
                     log(f"\n{Colors.BOLD}{Colors.GREEN}SUCCESS! ACTIVATION LINK FOUND:{Colors.ENDC}")
                     log(f"{Colors.BOLD}{link}{Colors.ENDC}\n")
                     self.found_link = True
+                    save_account_to_json(self.email, self.password, link)
                     self.sio.disconnect()
                 else:
                     log("[!] Email received but link extraction failed. Retrying in 5s...", Colors.WARNING)
@@ -114,6 +146,7 @@ class CutoutAutomator:
                         log(f"\n{Colors.BOLD}{Colors.GREEN}SUCCESS (on retry)!:{Colors.ENDC}")
                         log(f"{Colors.BOLD}{link}{Colors.ENDC}\n")
                         self.found_link = True
+                        save_account_to_json(self.email, self.password, link)
                         self.sio.disconnect()
                     else:
                         log("[!] Link extraction failed again.", Colors.FAIL)
