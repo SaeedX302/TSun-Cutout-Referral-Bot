@@ -11,7 +11,8 @@ import sys
 # --- CONFIGURATION ---
 REFERRAL_CODE = "cutout_share-2091786"  # Your referral code
 DOMAIN = "dayrep.com"
-SOCKET_URL = "https://ws.fakemailgenerator.com/"
+# Try using both https and http if one fails, or ensure the URL is exactly correct
+SOCKET_URL = "https://ws.fakemailgenerator.com" 
 BASE_URL = "https://www.fakemailgenerator.com"
 REG_API_TEMPLATE = "https://restapi.cutout.pro/user/registerByEmail2?email={prefix}%40{domain}&password={prefix}%40{domain}&vsource={vsource}"
 
@@ -41,7 +42,7 @@ def extract_activation_link(email_id, domain, recipient):
     content_url = f"{BASE_URL}/email/{domain}/{recipient}/message-{email_id}/"
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.get(content_url, headers=headers, timeout=10)
+        response = requests.get(content_url, headers=headers, timeout=15)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
             links = soup.find_all('a', href=True)
@@ -59,31 +60,39 @@ class CutoutAutomator:
     def __init__(self, prefix):
         self.prefix = prefix
         self.email = f"{prefix}@{DOMAIN}"
-        self.sio = socketio.Client()
+        # logger=True, engineio_logger=True can help debug but produce a lot of output
+        self.sio = socketio.Client(reconnection=True, reconnection_attempts=5, reconnection_delay=2)
         self.found_link = False
 
         # Setup Socket Events
         self.sio.on('connect', self.on_connect)
         self.sio.on('incoming_email', self.on_email)
         self.sio.on('disconnect', self.on_disconnect)
+        self.sio.on('connect_error', self.on_connect_error)
 
     def on_connect(self):
         log(f"[*] Connected to WebSocket. Watching: {self.email}", Colors.CYAN)
         self.sio.emit('watch_address', self.email.lower())
-        
-        # Once connected, trigger the registration API
+        # Small delay to ensure the server registered our watch request
+        time.sleep(1)
         self.trigger_registration()
+
+    def on_connect_error(self, data):
+        log(f"[!] Connection Error: {data}", Colors.FAIL)
 
     def trigger_registration(self):
         reg_url = REG_API_TEMPLATE.format(prefix=self.prefix, domain=DOMAIN, vsource=REFERRAL_CODE)
         log(f"[*] Sending Registration Request (api_1)...", Colors.BLUE)
         try:
-            res = requests.get(reg_url, timeout=10)
-            log(f"[*] api_1 Response: {res.text}", Colors.BLUE)
-            log("[*] Waiting for activation email...", Colors.WARNING)
+            # Use a session for better connection handling
+            with requests.Session() as session:
+                res = session.get(reg_url, timeout=15)
+                log(f"[*] api_1 Response: {res.text}", Colors.BLUE)
+                log("[*] Waiting for activation email...", Colors.WARNING)
         except Exception as e:
             log(f"[!] api_1 Failed: {e}", Colors.FAIL)
-            self.sio.disconnect()
+            # Don't disconnect yet, maybe the request actually went through
+            # but we just didn't get the response
 
     def on_email(self, data):
         try:
@@ -95,47 +104,67 @@ class CutoutAutomator:
                 log("\n" + "!"*20 + " EMAIL DETECTED " + "!"*20, Colors.GREEN)
                 log(f"From: {sender}", Colors.BOLD)
                 
-                # Give the server a moment to save the body
-                time.sleep(2)
+                # Wait for the server to populate the email body
+                time.sleep(3)
                 link = extract_activation_link(email.get('emailid'), DOMAIN, self.prefix)
                 
                 if link:
                     log(f"\n{Colors.BOLD}{Colors.GREEN}SUCCESS! ACTIVATION LINK FOUND:{Colors.ENDC}")
                     log(f"{Colors.BOLD}{link}{Colors.ENDC}\n")
                     self.found_link = True
-                    # Disconnect after finding the link
                     self.sio.disconnect()
                 else:
-                    log("[!] Email received but link extraction failed.", Colors.FAIL)
+                    log("[!] Email received but link extraction failed. Retrying in 5s...", Colors.WARNING)
+                    time.sleep(5)
+                    link = extract_activation_link(email.get('emailid'), DOMAIN, self.prefix)
+                    if link:
+                        log(f"\n{Colors.BOLD}{Colors.GREEN}SUCCESS (on retry)!:{Colors.ENDC}")
+                        log(f"{Colors.BOLD}{link}{Colors.ENDC}\n")
+                        self.found_link = True
+                        self.sio.disconnect()
+                    else:
+                        log("[!] Link extraction failed again.", Colors.FAIL)
         except Exception as e:
             log(f"[!] Error in on_email: {e}", Colors.FAIL)
 
     def on_disconnect(self):
-        log("[*] Session Finished.", Colors.CYAN)
+        if not self.found_link:
+            log("[!] Disconnected before finding link.", Colors.WARNING)
+        else:
+            log("[*] Session Finished Successfully.", Colors.CYAN)
 
     def start(self):
+        log(f"[*] Connecting to {SOCKET_URL}...", Colors.CYAN)
         try:
-            self.sio.connect(SOCKET_URL, transports=['websocket'])
-            # Wait until link is found or manual exit
-            while not self.found_link:
+            # Try connecting with both websocket and polling as fallback
+            self.sio.connect(SOCKET_URL, transports=['websocket', 'polling'], socketio_path='socket.io')
+            # Wait until link is found or timeout (e.g., 5 minutes)
+            start_time = time.time()
+            while not self.found_link and (time.time() - start_time < 300):
                 time.sleep(1)
-        except KeyboardInterrupt:
-            log("\n[!] Interrupted by user.", Colors.FAIL)
+            
+            if not self.found_link:
+                log("[!] Timeout: No email received within 5 minutes.", Colors.FAIL)
+                
+        except socketio.exceptions.ConnectionError as e:
+            log(f"[!] Could not connect to the server: {e}", Colors.FAIL)
+            log("[*] Tip: Check your internet connection or if the website is down.", Colors.WARNING)
+        except Exception as e:
+            log(f"[!] An unexpected error occurred: {e}", Colors.FAIL)
         finally:
             if self.sio.connected:
                 self.sio.disconnect()
 
 if __name__ == "__main__":
-    # You can provide a prefix as an argument, or let it generate one
     if len(sys.argv) > 1:
         target_prefix = sys.argv[1]
     else:
         target_prefix = generate_prefix()
 
-    log(f"\n{Colors.HEADER}=== CUTOUT.PRO AUTO-REGISTRATION TOOL ==={Colors.ENDC}")
+    log(f"\n{Colors.HEADER}=== CUTOUT.PRO AUTO-REGISTRATION TOOL (FIXED) ==={Colors.ENDC}")
     log(f"Target Prefix: {Colors.BOLD}{target_prefix}{Colors.ENDC}")
     log(f"Referral:      {REFERRAL_CODE}")
-    log("-" * 40)
+    log("-" * 50)
 
     automator = CutoutAutomator(target_prefix)
     automator.start()
