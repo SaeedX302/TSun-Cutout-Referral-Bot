@@ -1,4 +1,5 @@
 import socketio
+from socketio.exceptions import ConnectionError
 import json
 import requests
 from bs4 import BeautifulSoup
@@ -170,7 +171,7 @@ class CutoutAutomator:
             if not self.found_link:
                 log("[!] Timeout: No email received within 5 minutes.", Colors.FAIL)
                 
-        except socketio.exceptions.ConnectionError as e:
+        except ConnectionError as e:
             log(f"[!] Could not connect to the server: {e}", Colors.FAIL)
         except Exception as e:
             log(f"[!] An unexpected error occurred: {e}", Colors.FAIL)
