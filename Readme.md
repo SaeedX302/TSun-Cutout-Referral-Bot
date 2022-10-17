@@ -1,15 +1,17 @@
-# Cutout.pro Auto-Registration Bot
+# Cutout.pro Multi-Account Registration Bot
 
-A powerful Python automation tool designed to streamline the registration process for Cutout.pro using temporary email addresses. It leverages WebSockets for real-time email monitoring and automatically extracts activation links.
+A powerful Python automation tool designed to create multiple Cutout.pro accounts using temporary email addresses. It leverages WebSockets for real-time email monitoring and automatically extracts activation links for every account created.
 
 ## 🚀 Key Features
-- **Real-time Monitoring:** Uses Socket.io to listen for incoming emails instantly without refreshing.
-- **Automated Registration:** Calls the Cutout.pro API automatically with a random or specific prefix.
-- **Link Extraction:** Automatically fetches email content and extracts the activation URL using BeautifulSoup.
-- **Data Persistence:** Saves all successfully created accounts (email, password, and activation link) into a structured `accounts.json` file.
-- **User-Friendly Logs:** Color-coded terminal output for easy status tracking.
-- **Robust Connection:** Includes automatic reconnection attempts and fallback transport methods (WebSockets/Polling).
-- **Persistent Terminal:** Keeps the terminal window open after completion so you can review the results.
+- **Interactive Setup:** Prompts for your prefix, referral code, and number of invites upon startup.
+- **Auto-Suffixing:** Automatically adds a random 4-digit numeric string to your prefix for every new account.
+- **Multi-Account Loop:** Seamlessly creates multiple accounts in a single run.
+- **Real-time Monitoring:** Uses Socket.io to listen for incoming emails instantly.
+- **Dual Data Saving:**
+  - `accounts.json`: Stores **Email**, **Password**, and **Timestamp**.
+  - `activation_links.json`: Stores **Gmail** (recipient), **Link** (activation URL), and **Timestamp**.
+- **Robust Connection:** Automatic reconnection and fallback transport methods (WebSockets/Polling).
+- **Persistent Terminal:** Keeps the terminal window open after completion.
 
 ## 🛠️ Installation
 
@@ -23,49 +25,50 @@ pip install "python-socketio[client]" requests beautifulsoup4
 ## 📖 How to Use
 
 ### Run the Script
-To start the automation, run the main script from your terminal:
+Start the bot by running:
 
-#### To use a random prefix:
 ```bash
 python main.py
 ```
 
-#### To use a specific prefix:
-```bash
-python main.py your_prefix_here
-```
+### Interactive Prompts
+1. **Enter Prefix Name:** (e.g., `tsuncca`) - The bot will add 4 random numbers to this for every account.
+2. **Enter Referral Code:** (e.g., `cutout_share-2091786`) - Your unique Cutout.pro referral ID.
+3. **How many invites do you want?** (e.g., `5`) - Enter the total number of accounts you want to create.
 
 ## 📊 Example Output
-When an email arrives from cutout.pro, the terminal will display:
-
 ```text
-============================================================
->>> NEW EMAIL RECEIVED <<<
-From:    service@cutout.pro
-Subject: Activate your cutout.pro account
-[*] Detecting cutout.pro email. Extracting activation link...
+=== CUTOUT.PRO MULTI-ACCOUNT BOT ===
+Enter Prefix Name: tsuncca
+Enter Referral Code: cutout_share-2091786
+How many invites do you want? 3
+--------------------------------------------------
+[*] Starting 3 registrations...
+
+[1/3] Processing: tsuncca4921
+[*] Connected to WebSocket. Watching: tsuncca4921@dayrep.com
+[*] Sending Registration Request (api_1)...
+[*] api_1 Response: {"code":1,"msg":"success"}
+[*] Waiting for activation email...
+
+!!!!!!!!!!!!!!!!!!!! EMAIL DETECTED !!!!!!!!!!!!!!!!!!!!
+From: service@cutout.pro
 
 SUCCESS! ACTIVATION LINK FOUND:
-https://www.cutout.pro/resBackMsg?type=2&token=a9d1f70676724b009eb70a49d6483b0c
+https://www.cutout.pro/resBackMsg?type=2&token=...
 
-[*] Account saved to accounts.json
-============================================================
+[*] Data saved to accounts.json and activation_links.json
 ```
 
 ## 📁 Project Structure
-- `cutout_auto_register.py`: The main automation script.
-- `accounts.json`: (Auto-generated) Stores created account credentials and links.
+- `main.py`: The main interactive automation script.
+- `accounts.json`: Stores created account credentials.
+- `activation_links.json`: Stores activation links for easy access.
 - `README.md`: Project documentation.
 
-## ⚙️ Configuration
-You can modify the following variables at the top of `cutout_auto_register.py`:
-- `REFERRAL_CODE`: Your unique Cutout.pro referral ID.
-- `DOMAIN`: The temporary email domain (default: `dayrep.com`).
-- `ACCOUNTS_FILE`: The name of the file where account data is saved.
-
 ## ⚠️ Important Notes
-- **One at a time:** The script is optimized to handle one registration per run for maximum reliability.
-- **Referral Integration:** Your referral code `cutout_share-2091786` is pre-configured.
-- **Waiting For Confirmation:** The terminal stays open until you press any key, ensuring you never miss a result.
+- **Input Validation:** The "invites" field only accepts numbers.
+- **Safety:** The script includes a 2-minute timeout per account to prevent hanging.
+- **Persistence:** All data is appended to the JSON files, so you never lose previous work.
 
 ---
