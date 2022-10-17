@@ -13,6 +13,7 @@ import os
 DOMAIN = "dayrep.com"
 SOCKET_URL = "https://ws.fakemailgenerator.com" 
 BASE_URL = "https://www.fakemailgenerator.com"
+CHECK_EMAIL_API = "https://restapi.cutout.pro/user/checkEmail?email={prefix}%40{domain}"
 REG_API_TEMPLATE = "https://restapi.cutout.pro/user/registerByEmail2?email={prefix}%40{domain}&password={prefix}%40{domain}&vsource={vsource}"
 ACCOUNTS_FILE = "accounts.json"
 LINKS_FILE = "activation_links.json"
@@ -27,6 +28,7 @@ class Colors:
     FAIL = '\033[91m'
     ENDC = '\033[0m'
     BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 def log(msg, color=Colors.ENDC):
     print(f"{color}{msg}{Colors.ENDC}")
@@ -57,6 +59,20 @@ def save_to_json(file_path, new_data):
     except Exception as e:
         log(f"[!] Error saving to {file_path}: {e}", Colors.FAIL)
 
+def check_email_exists(prefix):
+    """API_0: Checks if the email is already registered on Cutout.pro."""
+    url = CHECK_EMAIL_API.format(prefix=prefix, domain=DOMAIN)
+    try:
+        res = requests.get(url, timeout=10)
+        if res.status_code == 200:
+            data = res.json()
+            # Code 2002 means email is already used
+            if data.get("code") == 2002:
+                return True
+    except Exception:
+        pass
+    return False
+
 def extract_activation_link(email_id, domain, recipient):
     """Fetches the email content and extracts the cutout.pro activation link."""
     content_url = f"{BASE_URL}/email/{domain}/{recipient}/message-{email_id}/"
@@ -69,7 +85,6 @@ def extract_activation_link(email_id, domain, recipient):
             for link in links:
                 if 'cutout.pro/resBackMsg' in link['href']:
                     return link['href']
-            # Fallback regex
             match = re.search(r'https://www\.cutout\.pro/resBackMsg\?type=2&token=[a-zA-Z0-9]+', response.text)
             if match: return match.group(0)
     except Exception as e:
@@ -82,9 +97,10 @@ class CutoutAutomator:
         self.referral_code = referral_code
         self.email = f"{prefix}@{DOMAIN}"
         self.password = f"{prefix}@{DOMAIN}"
-        self.sio = socketio.Client(reconnection=True, reconnection_attempts=5, reconnection_delay=2)
+        self.sio = socketio.Client(reconnection=True, reconnection_attempts=3, reconnection_delay=1)
         self.found_link = False
         self.activation_link = None
+        self.error_occurred = False
 
         # Setup Socket Events
         self.sio.on('connect', self.on_connect)
@@ -99,7 +115,8 @@ class CutoutAutomator:
         self.trigger_registration()
 
     def on_connect_error(self, data):
-        log(f"[!] Connection Error: {data}", Colors.FAIL)
+        self.error_occurred = True
+        log(f"[!] WebSocket Connection Error: {data}", Colors.FAIL)
 
     def trigger_registration(self):
         reg_url = REG_API_TEMPLATE.format(prefix=self.prefix, domain=DOMAIN, vsource=self.referral_code)
@@ -111,74 +128,44 @@ class CutoutAutomator:
                 log("[*] Waiting for activation email...", Colors.WARNING)
         except Exception as e:
             log(f"[!] api_1 Failed: {e}", Colors.FAIL)
+            self.error_occurred = True
 
     def on_email(self, data):
         try:
             email = data
             if isinstance(data, str): email = json.loads(data)
-            
             sender = email.get('sender', '')
             if 'cutout.pro' in sender.lower():
                 log("\n" + "!"*20 + " EMAIL DETECTED " + "!"*20, Colors.GREEN)
                 log(f"From: {sender}", Colors.BOLD)
-                
                 time.sleep(3)
                 link = extract_activation_link(email.get('emailid'), DOMAIN, self.prefix)
-                
                 if link:
                     log(f"\n{Colors.BOLD}{Colors.GREEN}SUCCESS! ACTIVATION LINK FOUND:{Colors.ENDC}")
                     log(f"{Colors.BOLD}{link}{Colors.ENDC}\n")
                     self.found_link = True
                     self.activation_link = link
-                    
-                    # Save account details
-                    save_to_json(ACCOUNTS_FILE, {
-                        "email": self.email,
-                        "password": self.password,
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    
-                    # Save activation link details
-                    save_to_json(LINKS_FILE, {
-                        "gmail": self.email,
-                        "link": link,
-                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    
+                    save_to_json(ACCOUNTS_FILE, {"email": self.email, "password": self.password, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
+                    save_to_json(LINKS_FILE, {"gmail": self.email, "link": link, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
                     log(f"[*] Data saved to {ACCOUNTS_FILE} and {LINKS_FILE}", Colors.GREEN)
                     self.sio.disconnect()
-                else:
-                    log("[!] Email received but link extraction failed. Retrying in 5s...", Colors.WARNING)
-                    time.sleep(5)
-                    link = extract_activation_link(email.get('emailid'), DOMAIN, self.prefix)
-                    if link:
-                        self.found_link = True
-                        self.activation_link = link
-                        save_to_json(ACCOUNTS_FILE, {"email": self.email, "password": self.password, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
-                        save_to_json(LINKS_FILE, {"gmail": self.email, "link": link, "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
-                        self.sio.disconnect()
         except Exception as e:
             log(f"[!] Error in on_email: {e}", Colors.FAIL)
 
     def on_disconnect(self):
-        if self.found_link:
-            log("[*] Registration Successful.", Colors.CYAN)
-        else:
-            log("[!] Disconnected.", Colors.WARNING)
+        pass
 
     def start(self):
         try:
             self.sio.connect(SOCKET_URL, transports=['websocket', 'polling'], socketio_path='socket.io')
             start_time = time.time()
-            # Wait for link or 2-minute timeout per account
-            while not self.found_link and (time.time() - start_time < 120):
+            while not self.found_link and not self.error_occurred and (time.time() - start_time < 120):
                 time.sleep(1)
-            
-            if not self.found_link:
+            if not self.found_link and not self.error_occurred:
                 log("[!] Timeout: No email received for this account.", Colors.FAIL)
-                
         except Exception as e:
-            log(f"[!] Error: {e}", Colors.FAIL)
+            log(f"[!] Connection Error: {e}", Colors.FAIL)
+            self.error_occurred = True
         finally:
             if self.sio.connected:
                 self.sio.disconnect()
@@ -186,46 +173,54 @@ class CutoutAutomator:
 
 def main():
     try:
-        log(f"\n{Colors.HEADER}=== CUTOUT.PRO MULTI-ACCOUNT BOT ==={Colors.ENDC}")
+        log(f"\n{Colors.HEADER}{Colors.BOLD}=== CUTOUT.PRO ADVANCED AUTO-BOT ==={Colors.ENDC}")
         
-        # 1. Ask for prefix
         base_prefix = input(f"{Colors.BOLD}Enter Prefix Name: {Colors.ENDC}").strip()
-        if not base_prefix:
-            base_prefix = "user"
+        if not base_prefix: base_prefix = "user"
             
-        # 2. Ask for Referral Code
         ref_code = input(f"{Colors.BOLD}Enter Referral Code: {Colors.ENDC}").strip()
-        if not ref_code:
-            ref_code = "cutout_share-2091786"
+        if not ref_code: ref_code = "cutout_share-2091786"
             
-        # 3. Ask for number of invites
         while True:
-            invites_str = input(f"{Colors.BOLD}How many invites do you want? {Colors.ENDC}").strip()
+            invites_str = input(f"{Colors.BOLD}How many successful invites do you want? {Colors.ENDC}").strip()
             if invites_str.isdigit():
-                num_invites = int(invites_str)
+                target_invites = int(invites_str)
                 break
             else:
                 log("[!] Please enter a valid number.", Colors.FAIL)
 
         log("-" * 50)
-        log(f"[*] Starting {num_invites} registrations...", Colors.WARNING)
+        log(f"[*] Target: {target_invites} Successful Registrations", Colors.WARNING)
         
         success_count = 0
-        for i in range(num_invites):
+        attempt_count = 0
+        
+        while success_count < target_invites:
+            attempt_count += 1
             current_prefix = f"{base_prefix}{generate_random_suffix()}"
-            log(f"\n[{i+1}/{num_invites}] Processing: {current_prefix}", Colors.HEADER)
+            
+            log(f"\n{Colors.UNDERLINE}[Attempt {attempt_count}] Processing: {current_prefix}{Colors.ENDC}", Colors.HEADER)
+            
+            # API_0: Check if email exists
+            log(f"[*] Checking if email exists (api_0)...", Colors.CYAN)
+            if check_email_exists(current_prefix):
+                log(f"[!] Email {current_prefix} already exists. Skipping...", Colors.WARNING)
+                continue
             
             automator = CutoutAutomator(current_prefix, ref_code)
             if automator.start():
                 success_count += 1
+                log(f"{Colors.GREEN}[+] Progress: {success_count}/{target_invites} Success{Colors.ENDC}")
+            else:
+                log(f"{Colors.FAIL}[-] Failed. Retrying with new prefix...{Colors.ENDC}")
             
-            # Small delay between accounts
-            if i < num_invites - 1:
-                log("[*] Waiting 5 seconds before next account...", Colors.CYAN)
+            if success_count < target_invites:
+                log("[*] Waiting 5 seconds for safety...", Colors.CYAN)
                 time.sleep(5)
 
         log("\n" + "=" * 50)
-        log(f"COMPLETED! Successfully created {success_count}/{num_invites} accounts.", Colors.GREEN)
+        log(f"{Colors.BOLD}{Colors.GREEN}COMPLETED! Target of {target_invites} accounts reached.{Colors.ENDC}", Colors.GREEN)
+        log(f"Total attempts made: {attempt_count}")
         
     except KeyboardInterrupt:
         log("\n[!] Bot stopped by user.", Colors.FAIL)
